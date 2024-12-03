@@ -1,0 +1,224 @@
+---
+title: "p8105_hw6_sw3455"
+author: "Shiying Wu"
+date: "2024-12-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(broom)
+library(tidyr)
+library(rnoaa)
+library(modelr)
+library(purrr)
+set.seed(123)  
+
+```
+
+```{r homework1}
+weather_df <- rnoaa::meteo_pull_monitors(
+  c("USW00094728"),
+  var = c("PRCP", "TMIN", "TMAX"), 
+  date_min = "2017-01-01",
+  date_max = "2017-12-31"
+) |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10
+  ) |>
+  select(name, id, everything())
+
+bootstrap_analysis <- function(data, n_bootstrap = 5000) {
+  results <- vector("list", n_bootstrap)
+  
+  for (i in 1:n_bootstrap) {
+    sample_data <- data |> sample_frac(size = 1, replace = TRUE)
+    model <- lm(tmax ~ tmin, data = sample_data)
+    
+    r_squared <- glance(model)$r.squared
+    coefficients <- tidy(model)
+    log_b0_b1 <- log(prod(coefficients$estimate))
+    
+    results[[i]] <- tibble(r_squared = r_squared, log_b0_b1 = log_b0_b1)
+  }
+  
+  results_df <- bind_rows(results)
+  return(results_df)
+}
+
+bootstrap_results <- bootstrap_analysis(weather_df)
+
+str(bootstrap_results)
+
+
+ggplot(bootstrap_results, aes(x = r_squared)) +
+  geom_histogram(bins = 30, alpha = 0.7) +
+  labs(title = "Distribution of R-squared Estimates", x = "R-squared", y = "Frequency")
+
+ggplot(bootstrap_results, aes(x = log_b0_b1)) +
+  geom_histogram(bins = 30, alpha = 0.7) +
+  labs(title = "Distribution of log(Beta0 * Beta1) Estimates", x = "log(Beta0 * Beta1)", y = "Frequency")
+
+quantile(bootstrap_results$r_squared, probs = c(0.025, 0.975))
+quantile(bootstrap_results$log_b0_b1, probs = c(0.025, 0.975))
+
+```
+
+```{r homicide}
+homicide <- read_csv("data/homicide-data.csv", na = c(".", "NA", "", "Unknown"))
+
+homicide <- homicide |>
+  drop_na()|>
+  mutate(city_state = paste(city, state, sep = ", "),
+         solved = as.numeric(disposition == "Closed by arrest"),
+         victim_age = as.numeric(victim_age)) |>
+  filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
+         victim_race %in% c("White", "Black")) |>
+  mutate(victim_race = fct_relevel(victim_race, "White")) |>
+  select(solved, city_state, victim_age, victim_race, victim_sex)
+
+baltimore_model <- 
+  glm(solved ~ victim_age + victim_sex + victim_race, data = filter(homicide, city_state == "Baltimore, MD"), family = binomial())
+
+save(baltimore_model, file = "baltimore_model.RData")
+
+baltimore_model |> 
+  broom::tidy()|>
+  filter(term == "victim_sexMale")|>
+  mutate(
+    or = exp(estimate),
+    lower_ci = exp(estimate - 1.96 * std.error),
+    upper_ci = exp(estimate + 1.96 * std.error)
+  ) |> 
+  select(term, or, lower_ci, upper_ci, p.value) |>
+  knitr::kable(digits = 3)
+```
+The odds of solving a homicide in baltimore with a male victim are 0.426 times the odds of solving a homicide in baltimore with a female victim, holding all other variables constant. This indicates that homicides with female victims are more likely to be solved compared to those with male victims, as the odds ratio is less than 1 and statistically significant (p-value < 0.05).
+```{r homicide each cities, fig.width = 8, fig.asp = 1}
+homicide_results <- homicide |>
+  group_by(city_state) |>
+  nest() |>
+  mutate(
+    model = map(data, ~ glm(solved ~ victim_sex + victim_age + victim_race, data = ., family = binomial())),
+    tidied = map(model, tidy),
+    glanced = map(model, glance)
+  ) |>
+  select(city_state, tidied, glanced) |>
+  unnest(tidied) |>
+  filter(term == "victim_sexMale") |>  
+  mutate(
+    or = exp(estimate),
+    lower_ci = exp(estimate - 1.96 * std.error),
+    upper_ci = exp(estimate + 1.96 * std.error)
+  ) |>
+  select(city_state, or, lower_ci, upper_ci, p.value) |>
+  arrange(or)
+homicide_results |>
+  knitr::kable(digits = 3)
+
+ggplot(homicide_results, aes(x = reorder(city_state, or), y = or)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2) +
+  coord_flip() + 
+  labs(x = "City", y = "Adjusted Odds Ratio (Male vs. Female)",
+       title = "Adjusted Odds Ratio for Solving Homicides by City") +
+  theme_minimal() +
+  theme(axis.text.y = element_text(size = 11))
+
+```
+The plot displays adjusted odds ratios for solving homicides comparing male to female victims across various U.S. cities, revealing significant variability. Most of cities 's odds ratio is less than 1 indicate a higher likelihood of solving cases with female victims like Oakland in CA has lowest value, while those above 1 suggest a better resolution rate for male victims like Fresno in CA has highest value. The confidence intervals vary widely, may due to differences in many different factors, as Fresno in CA has widest confidence interval.
+
+
+```{r birthweight}
+birthweight<- read_csv("data/birthweight.csv", na = c(".", "NA", "", "Unknown")) |>
+  janitor::clean_names()
+
+birthweight <- birthweight |>
+  mutate(
+    babysex = case_when(
+      babysex == 1 ~ "Male",
+      babysex == 2 ~ "Female"),
+    frace = case_when(
+      frace == 1 ~ "White",
+      frace == 2 ~ "Black",
+      frace == 3 ~ "Asian",
+      frace == 4 ~ "Puerto Rican",
+      frace == 8 ~ "Other",
+      TRUE ~ NA),
+    mrace = case_when(
+      mrace == 1 ~ "White",
+      mrace == 2 ~ "Black",
+      mrace == 3 ~ "Asian",
+      mrace == 4 ~ "Puerto Rican",
+      mrace == 8 ~ "Other",
+      TRUE ~ NA),
+    malform = case_when(
+      malform == 0 ~ "Absent",
+      malform == 1 ~ "Present",
+      TRUE ~ NA)) |>
+  drop_na()
+```
+I assume that the women's age, height, weight before pregnancy, and income would as predictor.
+
+```{r birthweight model}
+birthmodel <- lm(bwt ~ ppwt + mheight + momage + fincome, data = birthweight)
+birthweight |>
+  modelr::add_predictions(birthmodel) |>
+  modelr::add_residuals(birthmodel) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(col = "red") +
+  labs(x = "Predicted Birthweight", y = "Residuals")
+```
+The residuals plot against predicted birthweight indicates a nonlinear relationship and heteroscedasticity. In a perfectly linear relationship, the residuals should appear as random scatter—without any systematic pattern—around the horizontal line at zero, but in our plot, it does not looks like spread randomly but cluster in middle, so we may need some transformation based on it. The plot shows signs of heteroscedasticity as indicated by the increasing spread of residuals as the predicted birthweight values increase, forming a fan-like shape. This pattern suggests that the variability of residuals is not constant and tends to grow with larger values of predicted birthweight, violating the assumption of homoscedasticity essential for linear regression.
+
+```{r try fix model}
+ggplot(birthweight,aes(x = bwt)) + geom_histogram()
+ggplot(birthweight,aes(x = ppwt)) + geom_histogram()
+ggplot(birthweight,aes(x = mheight)) + geom_histogram()
+ggplot(birthweight,aes(x = momage)) + geom_histogram()
+ggplot(birthweight,aes(x = fincome)) + geom_histogram()
+
+birthmodel <- lm(bwt ~ log(ppwt+1) + mheight + log(momage+1) + log(fincome+1), data = birthweight)
+birthweight |>
+  modelr::add_predictions(birthmodel) |>
+  modelr::add_residuals(birthmodel) |>
+  ggplot(aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(col = "red") +
+  labs(x = "Predicted Birthweight", y = "Residuals")
+```
+By checking each individual's distribution, I noticed the right skewness of ppwt, momage and fincome, so I use log transformation to make it more normal. The residual plot is still really concentrate into middle with a pattern but better than previous plot. The plot is not optimal and worth more investigation and improvement in future.
+
+```{r birthweight model compare}
+cv_folds <- modelr::crossv_mc(birthweight, 100)
+
+cv_df <- cv_folds |>
+  mutate(train = map(train, as_tibble),
+         test = map(test, as_tibble),
+         birthmodel = map(train, \(df) lm(bwt ~ log(ppwt+1) + mheight + log(momage+1) + log(fincome+1), data = df)),
+         model1 = map(train, \(df) lm(bwt ~ blength + gaweeks, data = df)),
+         model2 = map(train, \(df) lm(bwt ~ bhead * blength * babysex, data = df)),
+         rmse = map2_dbl(birthmodel, test, \(mod, df) rmse(model = mod, data = df)),
+         rmse1 = map2_dbl(model1, test, \(mod, df) rmse(model = mod, data = df)),
+         rmse2 = map2_dbl(model2, test, \(mod, df) rmse(model = mod, data = df)))
+
+cv_df |>
+  select(starts_with("rmse")) |>
+  pivot_longer(
+    everything(), 
+    names_to = "model",
+    values_to = "rmse") |>
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin() +
+  labs(title = "RMSE Comparison Across Models",
+       x = "Model",
+       y = "RMSE")
+
+```
+The RMSE comparison plot visualizes the prediction errors across three models, each distinct in their complexity and approach. The base model ('rmse') presents the widest error distribution, suggesting it might be too complex, possibly overfitting the data. In contrast, Model 1 ('rmse1'), using just length and gestational age, exhibits a more focused distribution with consistently lower errors, indicating a balanced and effective approach to prediction. Model 2 ('rmse2'), which includes a comprehensive set of interactions, shows an error profile slightly broader than Model 1 but less varied than the base model, suggesting it captures complex relationships without excessive overfitting. This visualization aids in selecting Model 1 as the optimal choice for achieving reliable and accurate predictions, given its lower and more stable RMSE values.
