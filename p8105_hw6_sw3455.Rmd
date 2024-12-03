@@ -1,8 +1,8 @@
 ---
-title: "p8105_hw6_sw3455"
+title: "p8105_hw5_sw3455"
 author: "Shiying Wu"
-date: "2024-12-02"
-output: html_document
+date: "2024-11-13"
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
@@ -164,7 +164,7 @@ birthweight <- birthweight |>
 ```
 I assume that the women's age, height, weight before pregnancy, and income would as predictor.
 
-```{r birthweight model}
+```{r birthweight model, fig.width = 8, fig.asp = 0.6}
 birthmodel <- lm(bwt ~ ppwt + mheight + momage + fincome, data = birthweight)
 birthweight |>
   modelr::add_predictions(birthmodel) |>
@@ -176,7 +176,7 @@ birthweight |>
 ```
 The residuals plot against predicted birthweight indicates a nonlinear relationship and heteroscedasticity. In a perfectly linear relationship, the residuals should appear as random scatter—without any systematic pattern—around the horizontal line at zero, but in our plot, it does not looks like spread randomly but cluster in middle, so we may need some transformation based on it. The plot shows signs of heteroscedasticity as indicated by the increasing spread of residuals as the predicted birthweight values increase, forming a fan-like shape. This pattern suggests that the variability of residuals is not constant and tends to grow with larger values of predicted birthweight, violating the assumption of homoscedasticity essential for linear regression.
 
-```{r try fix model}
+```{r try fix model, fig.width = 8, fig.asp = 0.6}
 ggplot(birthweight,aes(x = bwt)) + geom_histogram()
 ggplot(birthweight,aes(x = ppwt)) + geom_histogram()
 ggplot(birthweight,aes(x = mheight)) + geom_histogram()
@@ -194,7 +194,7 @@ birthweight |>
 ```
 By checking each individual's distribution, I noticed the right skewness of ppwt, momage and fincome, so I use log transformation to make it more normal. The residual plot is still really concentrate into middle with a pattern but better than previous plot. The plot is not optimal and worth more investigation and improvement in future.
 
-```{r birthweight model compare}
+```{r birthweight model compare, fig.width = 8, fig.asp = 0.6}
 cv_folds <- modelr::crossv_mc(birthweight, 100)
 
 cv_df <- cv_folds |>
@@ -216,9 +216,7 @@ cv_df |>
   mutate(model = fct_inorder(model)) |> 
   ggplot(aes(x = model, y = rmse)) +
   geom_violin() +
-  labs(title = "RMSE Comparison Across Models",
-       x = "Model",
-       y = "RMSE")
+  labs(x = "Model",y = "RMSE")
 
 ```
 The RMSE comparison plot visualizes the prediction errors across three models, each distinct in their complexity and approach. The base model ('rmse') presents the widest error distribution, suggesting it might be too complex, possibly overfitting the data. In contrast, Model 1 ('rmse1'), using just length and gestational age, exhibits a more focused distribution with consistently lower errors, indicating a balanced and effective approach to prediction. Model 2 ('rmse2'), which includes a comprehensive set of interactions, shows an error profile slightly broader than Model 1 but less varied than the base model, suggesting it captures complex relationships without excessive overfitting. This visualization aids in selecting Model 1 as the optimal choice for achieving reliable and accurate predictions, given its lower and more stable RMSE values.
